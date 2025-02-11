@@ -1,8 +1,8 @@
 {
-  "name": "adapt-ppq",
+  "name": "adapt-ppq-master",
   "version": "3.0.0",
   "framework": "^5.0.0",
-  "homepage": "https://github.com/cgkineo/adapt-ppq",
+  "homepage": "https://github.com/ambivalent-axiom/adapt-ppq-master",
   "displayName" : "Pin Point Question",
   "component" : "ppq",
   "description": "A question component that requires users to correctly position one or more pins on an image.",

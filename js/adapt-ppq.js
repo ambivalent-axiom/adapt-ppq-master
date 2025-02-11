@@ -3,18 +3,21 @@ define([
   'core/js/adapt',
   'core/js/views/questionView',
   './draggabilly',
-  './round'
-], function(Adapt, QuestionView, Draggabilly, round) {
+  './round',
+  'core/js/device',
+  'core/js/components'
+], function(Adapt, QuestionView, Draggabilly, round, device, components) {
 
   const Ppq = QuestionView.extend({
     events: {
       'click .ppq-pinboard': 'onPinboardClicked'
     },
+    setupFeedback: function() {},
     render: function() {
       QuestionView.prototype.render.apply(this, arguments);
 
       // unsafe to run in postRender due to QuestionView deferreds
-      this.setupPinboardImage(Adapt.device.screenSize);
+      this.setupPinboardImage(device.screenSize);
       this.setupCorrectZones();
       this.addPinViews();
 
@@ -26,7 +29,7 @@ define([
     },
     addPinViews: function() {
       const userAnswer = _.extend([], this.model.get('_userAnswer'));
-      const isDesktop = Adapt.device.screenSize !== 'small';
+      const isDesktop = device.screenSize !== 'small';
 
       // restore positions if submitted
       if (this.model.get('_isSubmitted') && userAnswer.length > 0) {
@@ -49,11 +52,8 @@ define([
     },
     setupQuestion: function() {
       if (!this.model.has('_minSelection')) this.model.set('_minSelection', 1);
-
       this.model.set('_maxSelection', Math.max(this.model.get('_maxSelection') || 0, this.model.get('_items').length));
-
       this._pinViews = [];
-
       this.restoreUserAnswers();
     },
     setupPinboardImage: function(screenSize) {
@@ -67,7 +67,7 @@ define([
       }
     },
     setupCorrectZones: function() {
-      let props; const isDesktop = Adapt.device.screenSize !== 'small';
+      let props; const isDesktop = device.screenSize !== 'small';
 
       _.each(this.model.get('_items'), function(item, index) {
         props = isDesktop ? item.desktop : item.mobile;
@@ -80,7 +80,6 @@ define([
       this.setQuestionAsSubmitted();
       this.markQuestion();
       this.setScore();
-      this.setupFeedback();
     },
     disableQuestion: function() {
       this.setAllItemsEnabled(false);
@@ -148,7 +147,7 @@ define([
         if (this.model.get('_isSubmitted')) {
           this.checkCompatibility();
           this.$('.ppq-other-device').toggleClass('display-none', !this.model.get('_showOtherDeviceCompletionMessage'));
-          this.$('.ppq-pinboard-container, .buttons').toggleClass('display-none', this.model.get('_showOtherDeviceCompletionMessage'));
+          this.$('.ppq-pinboard-container, .btn__container').toggleClass('display-none', this.model.get('_showOtherDeviceCompletionMessage'));
         } else {
           this.resetPins();
         }
@@ -161,7 +160,7 @@ define([
 
       if (!isSubmitted) return;
 
-      const isDesktop = Adapt.device.screenSize !== 'small';
+      const isDesktop = device.screenSize !== 'small';
       const isUserAnswerDesktop = this.model.get('_userAnswer')[0] === 1;
       const resetPinsOnPinboardChange = this.model.get('_resetPinsOnPinboardChange');
 
@@ -188,8 +187,8 @@ define([
       const pinboardOffset = $pinboard.offset();
 
       // Calculate position relative to pinboard
-      const x = event.pageX - pinboardOffset.left - 10;
-      const y = event.pageY - pinboardOffset.top + 95;
+      const x = event.pageX - pinboardOffset.left - 30;
+      const y = event.pageY - pinboardOffset.top - 5;
 
       // Get board dimensions
       const boardw = $pinboard.width();
@@ -212,7 +211,7 @@ define([
       return this.$('.ppq-pin.in-use').length >= this.model.get('_minSelection');
     },
     storeUserAnswer: function() {
-      const userAnswer = [Adapt.device.screenSize === 'small' ? 0 : 1];
+      const userAnswer = [device.screenSize === 'small' ? 0 : 1];
       let pin, pos;
 
       for (let i = 0, l = this._pinViews.length; i < l; i++) {
@@ -235,12 +234,31 @@ define([
         if (itemIndex !== -1) map[itemIndex] = true;
       }
 
-      this.model.get('_isAtLeastOneCorrectSelection', _.indexOf(map, true) !== -1);
+      const hasAtLeastOneCorrect = _.indexOf(map, true) !== -1;
+      const isFullyCorrect = _.compact(map).length === items.length;
 
-      return _.compact(map).length === items.length;
+      if (!isFullyCorrect && hasAtLeastOneCorrect) {
+        this.isPartlyCorrect();
+        return false;
+      }
+
+      this.model.set('_isAtLeastOneCorrectSelection', _.indexOf(map, true) !== -1);
+
+      return isFullyCorrect;
     },
     isPartlyCorrect: function() {
-      return this.model.get('_isAtLeastOneCorrectSelection');
+
+      const isCorrect = this.model.get('_isCorrect');
+      const hasAtLeastOneCorrect = this.model.get('_isAtLeastOneCorrectSelection');
+
+      // Only return true if we have some correct answers but not all
+      if (isCorrect) return false;
+      this.model.set('_isPartlyCorrect', true); // set partly correct
+      return hasAtLeastOneCorrect;
+    },
+    markQuestion: function() {
+      // Call parent markQuestion
+      QuestionView.prototype.markQuestion.apply(this, arguments);
     },
     setScore: function() {
       const questionWeight = this.model.get('_questionWeight');
@@ -253,6 +271,10 @@ define([
 
       const map = new Array(this.model.get('_items').length);
 
+      if (this.model.get('_shouldShowZones')) { // show zones if enabled
+        this.$('.ppq-correct-zone').removeClass('display-none');
+      }
+
       for (let i = 0, l = this._pinViews.length; i < l; i++) {
         const pin = this._pinViews[i];
         const pos = pin.getPosition();
@@ -263,9 +285,15 @@ define([
           // if pin inside item mark as correct, but mark any others in same item as incorrect
           if (itemIndex !== -1 && !map[itemIndex]) {
             map[itemIndex] = true;
-            pin.$el.addClass('correct').removeClass('incorrect');
+            pin.$el
+              .addClass('ppq-correct-icon icon-shield')
+              .removeClass('ppq-incorrect-icon icon-flag')
+              .addClass('icon');
           } else {
-            pin.$el.addClass('incorrect').removeClass('correct');
+            pin.$el
+              .addClass('ppq-incorrect-icon icon-flag')
+              .removeClass('ppq-correct-icon icon-shield')
+              .addClass('icon');
           }
         }
       }
@@ -283,7 +311,7 @@ define([
       });
     },
     showCorrectAnswer: function() {
-      const isDesktop = Adapt.device.screenSize !== 'small';
+      const isDesktop = device.screenSize !== 'small';
       const items = this.model.get('_items');
       const map = new Array(items.length);
       const free = []; // new Array();
@@ -331,7 +359,7 @@ define([
     },
     // given a coordinate return the index of the containing item if found
     getIndexOfItem: function(x, y, desktop) {
-      const isDesktop = _.isBoolean(desktop) ? desktop : Adapt.device.screenSize !== 'small';
+      const isDesktop = _.isBoolean(desktop) ? desktop : device.screenSize !== 'small';
       const items = this.model.get('_items');
       for (let i = 0, l = items.length; i < l; i++) {
         const zone = isDesktop ? items[i].desktop : items[i].mobile;
@@ -342,17 +370,17 @@ define([
       return -1;
     },
     onDragStart: function(pin, event) {
-      console.log('Drag Start');
+      // console.log('Drag Start');
     },
     onDragEnd: function(pin, event) {
-      console.log('Drag End');
+      // console.log('Drag End');
 
       const $pinboard = this.$('.ppq-pinboard');
       const boardw = $pinboard.width();
       const boardh = $pinboard.height();
       const pos = pin.$el.position();
       const x = pos.left + pin.$el.width() / 2;
-      const y = pos.top + pin.$el.height();
+      const y = (pos.top + pin.$el.height()) - 25;
       const percentX = 100 * x / boardw;
       const percentY = 100 * y / boardh;
       pin.setPosition(percentX, percentY);
@@ -379,9 +407,7 @@ define([
 
     render: function() {
       const template = Handlebars.templates.ppqPin;
-
       this.$el.html(template());
-
       return this;
     },
 
@@ -390,7 +416,7 @@ define([
     },
 
     reset: function() {
-      this.$el.removeClass('in-use correct incorrect');
+      this.$el.removeClass('in-use ppq-correct-icon ppq-incorrect-icon');
       this.state.unset('position');
     },
 
@@ -413,6 +439,6 @@ define([
     }
   });
 
-  Adapt.register('ppq', Ppq);
+  components.register('ppq', Ppq);
   return Ppq;
 });
